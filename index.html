@@ -152,6 +152,62 @@
     font-family: monospace;
   }
   #close-panel:hover { background: rgba(255,255,255,0.1); }
+  .toggle-row {
+    display: grid;
+    grid-template-columns: 24px 1fr;
+    grid-template-rows: auto auto;
+    column-gap: 10px;
+    align-items: center;
+    padding: 12px;
+    margin-bottom: 12px;
+    background: rgba(128, 192, 255, 0.06);
+    border: 1px solid rgba(128, 192, 255, 0.2);
+    cursor: pointer;
+    user-select: none;
+  }
+  .toggle-row input {
+    grid-row: 1 / 3;
+    width: 18px; height: 18px;
+    accent-color: #80c0ff;
+    cursor: pointer;
+  }
+  .toggle-label {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 10px;
+    color: #80c0ff;
+    letter-spacing: 1px;
+  }
+  .toggle-hint {
+    font-size: 11px;
+    color: rgba(255,255,255,0.5);
+  }
+  #reset-round {
+    padding: 10px;
+    border: 2px solid #ffd040;
+    background: rgba(255, 208, 64, 0.08);
+    color: #ffd040;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 10px;
+    cursor: pointer;
+    margin-bottom: 10px;
+    letter-spacing: 1px;
+  }
+  #reset-round:hover { background: rgba(255, 208, 64, 0.2); }
+  .char-row.picked {
+    opacity: 0.4;
+    background: rgba(255,255,255,0.02);
+  }
+  .char-row.picked .char-name {
+    text-decoration: line-through;
+    color: rgba(255,255,255,0.5);
+  }
+  .char-row .picked-mark {
+    display: none;
+    color: #80ff80;
+    font-size: 13px;
+    margin-right: 4px;
+  }
+  .char-row.picked .picked-mark { display: inline; }
   #char-list {
     flex: 1;
     overflow-y: auto;
@@ -242,6 +298,12 @@
     <span>УЧАСТНИКИ</span>
     <button id="close-panel">×</button>
   </div>
+  <label class="toggle-row" id="mode-toggle-row">
+    <input type="checkbox" id="no-repeat-toggle">
+    <span class="toggle-label">КАЖДЫЙ ПО РАЗУ</span>
+    <span class="toggle-hint">выбранный уходит в дом</span>
+  </label>
+  <button id="reset-round" style="display:none">↺ СБРОСИТЬ РАУНД</button>
   <div id="char-list"></div>
   <button id="add-char">+ ДОБАВИТЬ НОВОГО</button>
   <div class="panel-foot">сохраняется автоматически</div>
@@ -371,7 +433,25 @@ const DEFAULT_CHARACTERS = [
 ];
 
 const STORAGE_KEY = 'pixel-sync-v1';
+const SETTINGS_KEY = 'pixel-sync-settings-v1';
 let CHARACTERS = [];
+let noRepeatMode = false;
+
+// Door positions — where the character's top-left lands so feet end up at door
+const HOUSE_DOORS = [
+  { x: 378, y: 114 },  // main house (top-right)
+  { x: 368, y: 242 },  // cottage (bottom-right)
+  { x: 36,  y: 102 },  // shed (top-left)
+];
+
+function nearestDoor(ch) {
+  let best = HOUSE_DOORS[0], bestD = Infinity;
+  for (const d of HOUSE_DOORS) {
+    const dist = Math.hypot(d.x - ch.x, d.y - ch.y);
+    if (dist < bestD) { bestD = dist; best = d; }
+  }
+  return best;
+}
 
 function c(hair, skin, shirt, pants, shoes) {
   return { hair, skin, shirt, pants, shoes };
@@ -426,10 +506,63 @@ function instantiateChar(def) {
     walking: false,
     wanderTarget: null,
     idleUntil: 0,
+    // no-repeat mode state
+    pickedThisRound: false,
+    hidden: false,
+    leaving: false,
+    leavingTo: null,
+    alpha: 1,
   };
   ch.sprite = makeChar(ch.palette);
   positionChar(ch, def);
   return ch;
+}
+
+function updateLeavingChar(ch, dt) {
+  if (!ch.leavingTo) return;
+  const dx = ch.leavingTo.x - ch.x;
+  const dy = ch.leavingTo.y - ch.y;
+  const d = Math.hypot(dx, dy);
+  if (d < 2) {
+    ch.leaving = false;
+    ch.hidden = true;
+    ch.walking = false;
+    ch.alpha = 0;
+    // auto reset when everyone has been picked
+    if (CHARACTERS.every(c => c.pickedThisRound)) {
+      setTimeout(resetRound, 1800);
+    }
+  } else {
+    const speed = 36;
+    ch.x += (dx / d) * speed * dt;
+    ch.y += (dy / d) * speed * dt;
+    ch.walking = true;
+    ch.walkPhase += dt * 7;
+    // fade out as approaching door
+    ch.alpha = Math.max(0, Math.min(1, (d - 6) / 22));
+  }
+}
+
+function resetRound() {
+  for (const ch of CHARACTERS) {
+    ch.pickedThisRound = false;
+    ch.hidden = false;
+    ch.leaving = false;
+    ch.leavingTo = null;
+    ch.alpha = 1;
+    ch.walking = false;
+    ch.wanderTarget = null;
+    // teleport back to start position
+    if (ch.station === 'wander') {
+      ch.x = ch.wanderHome.x;
+      ch.y = ch.wanderHome.y;
+    } else {
+      const s = STATIONS[ch.station];
+      ch.x = s.x + s.charOffset.dx;
+      ch.y = s.y + s.charOffset.dy;
+    }
+  }
+  if (typeof rebuildPanel === 'function') rebuildPanel();
 }
 
 function positionChar(ch, def) {
@@ -489,6 +622,22 @@ function loadFromStorage() {
     return parsed;
   } catch (e) { return null; }
 }
+
+function saveSettings() {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ noRepeatMode }));
+  } catch (e) {}
+}
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.noRepeatMode === 'boolean') noRepeatMode = parsed.noRepeatMode;
+  } catch (e) {}
+}
+loadSettings();
 
 function rnd(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
@@ -1674,28 +1823,31 @@ function drawRing(c, cx, cy, r, thick) {
 // CHARACTER DRAWING + AMBIENT (birds, butterflies)
 // =============================================================================
 function drawCharacter(g, ch, t) {
-  const isWanderer = ch.station === 'wander';
-  const bob = isWanderer && ch.walking ? 0 : Math.sin(t * 2 + ch.bobPhase) * 0.6;
+  const isMoving = (ch.station === 'wander' && ch.walking) || ch.leaving;
+  const bob = isMoving ? 0 : Math.sin(t * 2 + ch.bobPhase) * 0.6;
   let sprite;
-  if (isWanderer && ch.walking) {
+  if (isMoving) {
     sprite = (Math.floor(ch.walkPhase) % 2) ? ch.sprite.walk : ch.sprite.idle;
   } else {
     sprite = ch.sprite.idle;
   }
+  const prevAlpha = g.globalAlpha;
+  g.globalAlpha = prevAlpha * (ch.alpha ?? 1);
   // tiny shadow under feet
   g.fillStyle = C.shadow;
   drawEllipseOn(g, ch.x + 7, ch.y + 22, 5, 1.6);
   g.drawImage(sprite, Math.floor(ch.x), Math.floor(ch.y - bob));
 
-  // selection ring
-  if (selectedChar === ch && state !== 'overview') {
+  // selection ring (not when leaving)
+  if (selectedChar === ch && state !== 'overview' && !ch.leaving) {
     const pulse = (Math.sin(t * 5) + 1) / 2;
     g.fillStyle = `rgba(255, 208, 64, ${0.5 + pulse * 0.4})`;
     drawRing(g, ch.x + 7, ch.y + 23, 9, 1);
   }
 
-  // name label above head — always visible
-  drawNameLabel(g, ch, t);
+  // name label above head — always visible (unless leaving — too noisy)
+  if (!ch.leaving) drawNameLabel(g, ch, t);
+  g.globalAlpha = prevAlpha;
 }
 
 function drawNameLabel(g, ch, t) {
@@ -1941,13 +2093,23 @@ let rouletteInterval = 60; // ms between flips, ramps up
 
 function pickRandom() {
   if (state !== 'overview') return;
+  // Build pool: in no-repeat mode skip already-picked
+  const pool = noRepeatMode
+    ? CHARACTERS.filter(c => !c.pickedThisRound && !c.hidden && !c.leaving)
+    : CHARACTERS;
+  if (pool.length === 0) {
+    // everyone has been picked — auto reset and re-pick after a beat
+    resetRound();
+    setTimeout(pickRandom, 600);
+    return;
+  }
   // roulette: cycle through randomly with increasing interval, then settle on one
   state = 'roulette';
-  const target = CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)];
+  const target = pool[Math.floor(Math.random() * pool.length)];
   const duration = 1400; // ms
   const startTime = performance.now();
-  rouletteIndex = Math.floor(Math.random() * CHARACTERS.length);
-  selectedChar = CHARACTERS[rouletteIndex];
+  rouletteIndex = Math.floor(Math.random() * pool.length);
+  selectedChar = pool[rouletteIndex];
   pickBtn.disabled = true;
 
   const step = () => {
@@ -1955,8 +2117,8 @@ function pickRandom() {
     const progress = Math.min(elapsed / duration, 1);
     // ease out — interval grows
     const interval = 50 + progress * progress * 280;
-    rouletteIndex = (rouletteIndex + 1) % CHARACTERS.length;
-    selectedChar = CHARACTERS[rouletteIndex];
+    rouletteIndex = (rouletteIndex + 1) % pool.length;
+    selectedChar = pool[rouletteIndex];
     // gently nudge camera toward current selection
     camera.tx = selectedChar.x + 7;
     camera.ty = selectedChar.y + 12;
@@ -1986,6 +2148,14 @@ function zoomTo(c) {
 
 function returnToOverview() {
   state = 'returning';
+  // if no-repeat mode is on, mark this character picked and send them home
+  if (noRepeatMode && selectedChar && !selectedChar.pickedThisRound) {
+    const ch = selectedChar;
+    ch.pickedThisRound = true;
+    ch.leaving = true;
+    ch.leavingTo = nearestDoor(ch);
+    if (typeof rebuildPanel === 'function') rebuildPanel();
+  }
   camera.tx = VW / 2;
   camera.ty = VH / 2;
   camera.tz = 1;
@@ -2048,9 +2218,13 @@ function frame(now) {
   const dt = Math.min(0.05, (now - lastFrameTime) / 1000);
   lastFrameTime = now;
 
-  // update wanderers + cats
+  // update characters + cats
   for (const ch of CHARACTERS) {
-    if (ch.station === 'wander') updateWanderer(ch, dt, now);
+    if (ch.leaving) {
+      updateLeavingChar(ch, dt);
+    } else if (ch.station === 'wander') {
+      updateWanderer(ch, dt, now);
+    }
   }
   for (const cat of CATS) {
     updateCat(cat, dt, now);
@@ -2088,6 +2262,7 @@ function frame(now) {
     drawList.push({ y: s.y + 14, draw: () => s.draw(ctx, s, t) });
   }
   for (const ch of CHARACTERS) {
+    if (ch.hidden) continue;
     drawList.push({ y: ch.y + 22, draw: () => drawCharacter(ctx, ch, t) });
   }
   for (const cat of CATS) {
@@ -2116,6 +2291,8 @@ const panel = document.getElementById('panel');
 const closePanelBtn = document.getElementById('close-panel');
 const charListEl = document.getElementById('char-list');
 const addCharBtn = document.getElementById('add-char');
+const noRepeatToggle = document.getElementById('no-repeat-toggle');
+const resetRoundBtn = document.getElementById('reset-round');
 
 settingsBtn.addEventListener('click', () => {
   rebuildPanel();
@@ -2130,11 +2307,27 @@ addCharBtn.addEventListener('click', () => {
   rebuildPanel({ focusLastInput: true });
 });
 
+noRepeatToggle.checked = noRepeatMode;
+noRepeatToggle.addEventListener('change', (e) => {
+  noRepeatMode = e.target.checked;
+  // when turning off the mode, bring everyone back to the scene
+  if (!noRepeatMode) resetRound();
+  saveSettings();
+  rebuildPanel();
+});
+
+resetRoundBtn.addEventListener('click', () => {
+  resetRound();
+  rebuildPanel();
+});
+
 function rebuildPanel(opts = {}) {
   charListEl.innerHTML = '';
+  const anyPicked = CHARACTERS.some(c => c.pickedThisRound);
+  resetRoundBtn.style.display = (noRepeatMode && anyPicked) ? 'block' : 'none';
   CHARACTERS.forEach((ch, idx) => {
     const row = document.createElement('div');
-    row.className = 'char-row';
+    row.className = 'char-row' + (ch.pickedThisRound ? ' picked' : '');
 
     // sprite swatch (preview the character)
     const swatch = document.createElement('canvas');
