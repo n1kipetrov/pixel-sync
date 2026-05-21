@@ -543,6 +543,64 @@ function instantiateChar(def) {
   return ch;
 }
 
+function updateGardenRoutine(ch, dt, now) {
+  if (ch.leaving) return;
+  if (selectedChar === ch && state !== 'overview') {
+    ch.walking = false;
+    return;
+  }
+  if (!ch.routine) {
+    ch.routine = { action: 'hoe', start: now, duration: 2 };
+  }
+  const r = ch.routine;
+  if (now - r.start >= r.duration * 1000) {
+    const bag = ['hoe', 'hoe', 'water', 'plant', 'rest', 'hoe', 'water'];
+    let next = bag[Math.floor(Math.random() * bag.length)];
+    if (next === r.action && Math.random() < 0.5) next = bag[Math.floor(Math.random() * bag.length)];
+    r.action = next;
+    r.start = now;
+    r.duration = { hoe: 2.6, water: 3.2, plant: 1.8, rest: 1.6 }[next] || 2;
+  }
+  const s = STATIONS.garden;
+  ch.x = s.x + s.charOffset.dx;
+  ch.y = s.y + s.charOffset.dy;
+  // small pose offset per action
+  if (r.action === 'plant') ch.y += 3;
+  else if (r.action === 'hoe') ch.y += Math.abs(Math.sin((now - r.start) / 1000 * 6)) * 1;
+  else if (r.action === 'water') ch.y += Math.sin((now - r.start) / 1000 * 4) * 0.5;
+  ch.walking = false;
+}
+
+function updateKitchenRoutine(ch, dt, now) {
+  if (ch.leaving) return;
+  if (selectedChar === ch && state !== 'overview') {
+    ch.walking = false;
+    return;
+  }
+  if (!ch.routine) {
+    ch.routine = { action: 'stir', start: now, duration: 2, ingredient: '#e08030' };
+  }
+  const r = ch.routine;
+  if (now - r.start >= r.duration * 1000) {
+    const bag = ['stir', 'stir', 'add', 'blow', 'taste', 'stir', 'add'];
+    let next = bag[Math.floor(Math.random() * bag.length)];
+    if (next === r.action && Math.random() < 0.5) next = bag[Math.floor(Math.random() * bag.length)];
+    r.action = next;
+    r.start = now;
+    r.duration = { stir: 3.0, add: 1.4, blow: 2.0, taste: 1.4 }[next] || 2;
+    // pick random ingredient color for 'add'
+    r.ingredient = ['#e08030', '#40a040', '#c04050', '#ffd040', '#a08060', '#c0a040'][Math.floor(Math.random() * 6)];
+  }
+  const s = STATIONS.kitchen;
+  ch.x = s.x + s.charOffset.dx;
+  ch.y = s.y + s.charOffset.dy;
+  // pose offset per action
+  if (r.action === 'blow') ch.y += 4;          // crouch to blow
+  else if (r.action === 'taste') ch.y -= 1;    // lean back slightly
+  else if (r.action === 'stir') ch.y += Math.sin((now - r.start) / 1000 * 3) * 0.5;
+  ch.walking = false;
+}
+
 function updateCampfireRoutine(ch, dt, now) {
   if (ch.leaving) return;
   // freeze when this character is being focused so camera can converge
@@ -1621,14 +1679,39 @@ drawBackground();
 // =============================================================================
 function drawKitchen(g, s, t) {
   const x = s.x, y = s.y;
+  const ch = CHARACTERS.find(c => c.station === 'kitchen' && !c.hidden && c.routine);
+  const action = ch ? ch.routine.action : 'stir';
+  const elapsed = ch ? (performance.now() - ch.routine.start) / 1000 : 0;
+  const phase = ch ? Math.min(1, elapsed / ch.routine.duration) : 0;
+
   // stones for the firepit
   g.fillStyle = C.stoneDark;
   drawEllipseOn(g, x, y + 14, 14, 4);
   g.fillStyle = C.stone;
   drawEllipseOn(g, x, y + 13, 13, 3);
-  // fire
+  // fire (extra intense during 'blow')
   drawFire(g, x, y + 6, t);
-  // pot on tripod
+  if (action === 'blow') {
+    // extra flames
+    g.fillStyle = C.fireYellow;
+    for (let i = 0; i < 6; i++) {
+      const fx = x - 4 + Math.floor(Math.random() * 9);
+      const fy = y - Math.floor(Math.random() * 4);
+      g.fillRect(fx, fy, 1, 1);
+    }
+    g.fillStyle = C.fireOrange;
+    drawEllipseOn(g, x, y - 1, 4, 4);
+    // blow puff lines from the left (char's mouth)
+    g.globalAlpha = 0.7;
+    for (let i = 0; i < 3; i++) {
+      const px = x - 14 + i * 3;
+      const py = y + 4 + Math.sin(elapsed * 8 + i) * 1;
+      g.fillStyle = '#ffffff';
+      g.fillRect(Math.floor(px), Math.floor(py), 2, 1);
+    }
+    g.globalAlpha = 1;
+  }
+  // tripod legs
   g.fillStyle = C.stoneDark;
   g.fillRect(x - 6, y + 2, 1, 12);
   g.fillRect(x + 5, y + 2, 1, 12);
@@ -1640,12 +1723,64 @@ function drawKitchen(g, s, t) {
   g.fillRect(x - 6, y - 1, 12, 1);
   g.fillStyle = '#101010';
   g.fillRect(x - 6, y, 12, 4);
-  // handle
+  // handles
   g.fillStyle = '#202020';
   g.fillRect(x - 9, y - 1, 2, 1); g.fillRect(x - 9, y, 1, 1);
   g.fillRect(x + 7, y - 1, 2, 1); g.fillRect(x + 8, y, 1, 1);
-  // steam
-  drawSteam(g, x - 2, y - 4, t, 4);
+
+  // ---- action-specific overlays ----
+  if (action === 'stir') {
+    // spoon making circular stir motion in pot
+    const angle = elapsed * 5;
+    const sx = x + Math.cos(angle) * 3;
+    const sy = y - 1 + Math.sin(angle) * 1.2;
+    // handle going up-left to char's hand
+    drawLine(g, sx, sy, sx - 5, sy - 9, C.woodLight);
+    g.fillStyle = C.woodLight;
+    g.fillRect(Math.floor(sx) - 6, Math.floor(sy) - 10, 2, 2);
+    // bubbles/splash
+    if (Math.sin(angle * 2) > 0.7) {
+      g.fillStyle = '#806038';
+      g.fillRect(x - 2, y - 3, 1, 1);
+      g.fillRect(x + 2, y - 3, 1, 1);
+    }
+  } else if (action === 'add') {
+    // ingredient arcs from char's hand into pot
+    const charX = ch ? ch.x + 4 : x - 22;
+    const charY = ch ? ch.y + 4 : y - 8;
+    const ax = charX + (x - charX) * phase;
+    const ay = charY + (y - 2 - charY) * phase - Math.sin(phase * Math.PI) * 14;
+    g.fillStyle = ch ? ch.routine.ingredient : '#e08030';
+    g.fillRect(Math.floor(ax), Math.floor(ay), 3, 3);
+    g.fillStyle = '#000';
+    g.fillRect(Math.floor(ax) + 1, Math.floor(ay) + 1, 1, 1);
+    // splash when ingredient lands
+    if (phase > 0.92) {
+      g.fillStyle = '#806038';
+      g.fillRect(x - 2, y - 4, 1, 1);
+      g.fillRect(x + 2, y - 4, 1, 1);
+      g.fillStyle = ch ? ch.routine.ingredient : '#e08030';
+      g.fillRect(x, y - 5, 1, 1);
+    }
+  } else if (action === 'taste') {
+    // spoon rising from pot to char's mouth (to the left)
+    const sx = x - 12 + (1 - phase) * 10;
+    const sy = y - 5 - phase * 4;
+    drawLine(g, x - 4, y, sx, sy, C.woodLight);
+    g.fillStyle = C.woodLight;
+    g.fillRect(Math.floor(sx) - 1, Math.floor(sy) - 1, 3, 2);
+    g.fillStyle = '#806038';
+    g.fillRect(Math.floor(sx), Math.floor(sy) - 1, 1, 1);
+    // little tasting "!" or steam
+    if (phase > 0.7) {
+      g.fillStyle = '#ffd040';
+      g.fillRect(Math.floor(sx) - 4, Math.floor(sy) - 4, 1, 2);
+      g.fillRect(Math.floor(sx) - 4, Math.floor(sy) - 1, 1, 1);
+    }
+  }
+  // steam (extra during 'add' when splash, less during 'blow')
+  const steamCount = action === 'blow' ? 2 : action === 'add' ? 6 : 4;
+  drawSteam(g, x - 2, y - 4, t, steamCount);
 }
 
 function drawBakery(g, s, t) {
@@ -1687,22 +1822,89 @@ function drawBakery(g, s, t) {
 
 function drawGarden(g, s, t) {
   const x = s.x, y = s.y;
-  // hoe leaning (the plot itself is drawn in background)
-  g.fillStyle = C.woodDark;
-  g.fillRect(x + 14, y - 22, 1, 22);
-  g.fillStyle = '#606060';
-  g.fillRect(x + 12, y - 22, 4, 2);
-  // watering can next to her
-  g.fillStyle = '#606870';
-  g.fillRect(x - 18, y + 2, 6, 5);
-  g.fillRect(x - 12, y + 3, 2, 2);  // spout
-  g.fillStyle = '#404850';
-  g.fillRect(x - 18, y + 7, 6, 1);
-  g.fillRect(x - 18, y + 2, 6, 1);
+  const ch = CHARACTERS.find(c => c.station === 'garden' && !c.hidden && c.routine);
+  const action = ch ? ch.routine.action : 'rest';
+  const elapsed = ch ? (performance.now() - ch.routine.start) / 1000 : 0;
+
   // sparkle/bug
   if (Math.sin(t * 2) > 0.6) {
     g.fillStyle = C.fireYellow;
     g.fillRect(x + 8 + Math.floor(Math.sin(t * 3) * 4), y - 8, 1, 1);
+  }
+
+  if (action === 'hoe') {
+    // swinging hoe — angle oscillates between high and low strike
+    const swing = Math.sin(elapsed * 6) * 0.6 - 0.4;
+    const px = x - 4, py = y - 8;
+    const len = 14;
+    const ex = px + Math.cos(swing) * len;
+    const ey = py + Math.sin(swing) * len;
+    drawLine(g, px, py, ex, ey, C.woodDark);
+    // metal blade
+    g.fillStyle = '#808088';
+    g.fillRect(Math.floor(ex - 1), Math.floor(ey), 3, 2);
+    g.fillStyle = '#a0a0a8';
+    g.fillRect(Math.floor(ex - 1), Math.floor(ey), 3, 1);
+    // dirt puffs when hoe strikes ground
+    if (Math.sin(elapsed * 6) > 0.85) {
+      g.fillStyle = C.dirtDark;
+      g.fillRect(Math.floor(ex), Math.floor(ey) + 2, 1, 1);
+      g.fillRect(Math.floor(ex) + 2, Math.floor(ey) + 2, 1, 1);
+    }
+  } else if (action === 'water') {
+    // watering can in hand + dripping water
+    const cx = x - 6, cy = y - 12;
+    g.fillStyle = '#404850';
+    g.fillRect(cx, cy, 9, 6);
+    g.fillStyle = '#606870';
+    g.fillRect(cx, cy, 9, 1);
+    g.fillRect(cx, cy + 1, 1, 4);
+    // spout
+    g.fillStyle = '#606870';
+    g.fillRect(cx + 9, cy + 2, 3, 2);
+    g.fillStyle = '#404850';
+    g.fillRect(cx + 9, cy + 4, 3, 1);
+    // handle
+    g.fillStyle = '#606870';
+    g.fillRect(cx + 3, cy - 2, 4, 1);
+    g.fillRect(cx + 3, cy - 1, 1, 1);
+    g.fillRect(cx + 6, cy - 1, 1, 1);
+    // water stream
+    for (let i = 0; i < 6; i++) {
+      const dropPhase = (elapsed * 4 + i * 0.18) % 1;
+      const dx = cx + 13;
+      const dy = cy + 4 + dropPhase * 16;
+      g.fillStyle = '#5098d8';
+      g.fillRect(dx, Math.floor(dy), 1, 1);
+      if (dropPhase > 0.85) {
+        g.fillStyle = '#a0d0f0';
+        g.fillRect(dx - 1, Math.floor(dy) + 1, 1, 1);
+        g.fillRect(dx + 1, Math.floor(dy) + 1, 1, 1);
+        g.fillRect(dx, Math.floor(dy) + 2, 1, 1);
+      }
+    }
+  } else if (action === 'plant') {
+    // tiny seedling appearing in front
+    g.fillStyle = C.dirtDark;
+    g.fillRect(x + 4, y + 6, 5, 2);
+    g.fillStyle = C.cropDark;
+    g.fillRect(x + 6, y + 4, 1, 2);
+    g.fillStyle = C.crop;
+    g.fillRect(x + 6, y + 3, 1, 1);
+    // little hand motion line
+    g.fillStyle = C.dirtDark;
+    g.fillRect(x + 3 + Math.floor(Math.sin(elapsed * 5) * 1), y + 7, 1, 1);
+  } else {
+    // rest — hoe leaning beside her, wipes brow
+    g.fillStyle = C.woodDark;
+    g.fillRect(x + 14, y - 22, 1, 22);
+    g.fillStyle = '#808088';
+    g.fillRect(x + 12, y - 22, 4, 2);
+    // sweat drop
+    if (Math.sin(elapsed * 4) > 0.5) {
+      g.fillStyle = '#80c0e0';
+      g.fillRect(x - 6, y - 14 + Math.floor(Math.sin(elapsed * 4) * 2), 1, 2);
+    }
   }
 }
 
@@ -2345,6 +2547,10 @@ function frame(now) {
       updateWanderer(ch, dt, now);
     } else if (ch.station === 'campfire') {
       updateCampfireRoutine(ch, dt, now);
+    } else if (ch.station === 'garden') {
+      updateGardenRoutine(ch, dt, now);
+    } else if (ch.station === 'kitchen') {
+      updateKitchenRoutine(ch, dt, now);
     }
   }
   for (const cat of CATS) {
