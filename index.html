@@ -543,6 +543,71 @@ function instantiateChar(def) {
   return ch;
 }
 
+function updateCampfireRoutine(ch, dt, now) {
+  if (ch.leaving) return;
+  // freeze when this character is being focused so camera can converge
+  if (selectedChar === ch && state !== 'overview') {
+    ch.walking = false;
+    return;
+  }
+  if (!ch.routine) {
+    ch.routine = { action: 'idle', start: now, duration: 1500, dir: 1, circleDir: 1, circlePhase: ch.bobPhase || 0 };
+  }
+  const r = ch.routine;
+  if (now - r.start >= r.duration * 1000) {
+    // pick next action — weighted bag
+    const bag = ['circle', 'circle', 'jump', 'dance', 'idle', 'dance'];
+    let next = bag[Math.floor(Math.random() * bag.length)];
+    if (next === r.action && Math.random() < 0.6) next = bag[Math.floor(Math.random() * bag.length)];
+    r.action = next;
+    r.start = now;
+    r.duration = { circle: 4.5, jump: 1.1, dance: 3.2, idle: 2.4 }[next] || 2;
+    r.dir = Math.random() < 0.5 ? 1 : -1;
+    r.circleDir = Math.random() < 0.5 ? 1 : -1;
+    r.circlePhase = Math.random() * Math.PI * 2;
+  }
+  const FX = STATIONS.campfire.x;          // fire center x
+  const FY = STATIONS.campfire.y;          // fire center y
+  const phase = Math.min(1, (now - r.start) / 1000 / r.duration);
+
+  switch (r.action) {
+    case 'circle': {
+      const angle = ((now - r.start) / 1000) * 2.4 * r.circleDir + r.circlePhase;
+      const radius = 24;
+      ch.x = FX + Math.cos(angle) * radius - 7;
+      ch.y = FY + Math.sin(angle) * radius * 0.48 - 16;
+      ch.walking = true;
+      ch.walkPhase += dt * 9;
+      break;
+    }
+    case 'jump': {
+      const startX = FX - r.dir * 22 - 7;
+      const endX   = FX + r.dir * 22 - 7;
+      ch.x = startX + (endX - startX) * phase;
+      ch.y = FY - 12 - Math.sin(phase * Math.PI) * 20;
+      ch.walking = true;
+      ch.walkPhase += dt * 14;
+      break;
+    }
+    case 'dance': {
+      const t = (now - r.start) / 1000 * 7;
+      ch.x = FX + 16 - 7 + Math.sin(t) * 6;
+      ch.y = FY - 8 + Math.abs(Math.cos(t)) * -3;   // little hop
+      ch.walking = Math.sin(t * 2) > 0;
+      ch.walkPhase += dt * 8;
+      break;
+    }
+    case 'idle':
+    default: {
+      const s = STATIONS.campfire;
+      ch.x = s.x + s.charOffset.dx;
+      ch.y = s.y + s.charOffset.dy;
+      ch.walking = false;
+      break;
+    }
+  }
+}
+
 function updateLeavingChar(ch, dt) {
   if (!ch.leavingTo) return;
   const dx = ch.leavingTo.x - ch.x;
@@ -1877,7 +1942,7 @@ function drawRing(c, cx, cy, r, thick) {
 // CHARACTER DRAWING + AMBIENT (birds, butterflies)
 // =============================================================================
 function drawCharacter(g, ch, t) {
-  const isMoving = (ch.station === 'wander' && ch.walking) || ch.leaving;
+  const isMoving = ch.walking || ch.leaving;
   const bob = isMoving ? 0 : Math.sin(t * 2 + ch.bobPhase) * 0.6;
   let sprite;
   if (isMoving) {
@@ -2278,6 +2343,8 @@ function frame(now) {
       updateLeavingChar(ch, dt);
     } else if (ch.station === 'wander') {
       updateWanderer(ch, dt, now);
+    } else if (ch.station === 'campfire') {
+      updateCampfireRoutine(ch, dt, now);
     }
   }
   for (const cat of CATS) {
@@ -2317,7 +2384,10 @@ function frame(now) {
   }
   for (const ch of CHARACTERS) {
     if (ch.hidden) continue;
-    drawList.push({ y: ch.y + 22, draw: () => drawCharacter(ctx, ch, t) });
+    // jumping characters draw on top of their station so they appear in front of fire
+    const isJumping = ch.routine && ch.routine.action === 'jump';
+    const sortY = isJumping ? STATIONS[ch.station].y + 30 : ch.y + 22;
+    drawList.push({ y: sortY, draw: () => drawCharacter(ctx, ch, t) });
   }
   for (const cat of CATS) {
     drawList.push({ y: cat.y + 10, draw: () => drawCat(ctx, cat, t) });
