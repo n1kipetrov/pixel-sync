@@ -609,7 +609,7 @@ function updateCampfireRoutine(ch, dt, now) {
     return;
   }
   if (!ch.routine) {
-    ch.routine = { action: 'idle', start: now, duration: 1500, dir: 1, circleDir: 1, circlePhase: ch.bobPhase || 0 };
+    ch.routine = { action: 'idle', start: now, duration: 0.4, dir: 1, circleDir: 1, circlePhase: ch.bobPhase || 0 };
   }
   const r = ch.routine;
   if (now - r.start >= r.duration * 1000) {
