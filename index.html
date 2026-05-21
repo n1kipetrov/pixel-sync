@@ -543,6 +543,25 @@ function instantiateChar(def) {
   return ch;
 }
 
+function ensureRoutine(ch, now, defaultAction) {
+  if (!ch.routine) ch.routine = { action: defaultAction, start: now, duration: 0.4 };
+}
+
+function rotateRoutineAction(ch, now, bag, durations) {
+  const r = ch.routine;
+  if (now - r.start < r.duration * 1000) return false;
+  let next = bag[Math.floor(Math.random() * bag.length)];
+  if (next === r.action && Math.random() < 0.5) next = bag[Math.floor(Math.random() * bag.length)];
+  r.action = next;
+  r.start = now;
+  r.duration = durations[next] || 2;
+  return true;
+}
+
+function getStationChar(stationKey) {
+  return CHARACTERS.find(c => c.station === stationKey && !c.hidden && c.routine);
+}
+
 function updateGardenRoutine(ch, dt, now) {
   if (ch.leaving) return;
   if (selectedChar === ch && state !== 'overview') {
@@ -598,6 +617,90 @@ function updateKitchenRoutine(ch, dt, now) {
   if (r.action === 'blow') ch.y += 4;          // crouch to blow
   else if (r.action === 'taste') ch.y -= 1;    // lean back slightly
   else if (r.action === 'stir') ch.y += Math.sin((now - r.start) / 1000 * 3) * 0.5;
+  ch.walking = false;
+}
+
+function updateBakeryRoutine(ch, dt, now) {
+  if (ch.leaving) return;
+  if (selectedChar === ch && state !== 'overview') { ch.walking = false; return; }
+  ensureRoutine(ch, now, 'rest');
+  if (rotateRoutineAction(ch, now,
+    ['stoke', 'load', 'pull', 'rest', 'load', 'pull'],
+    { stoke: 1.8, load: 1.5, pull: 1.5, rest: 1.6 })) {
+    ch.routine.breadColor = ['#a06030', '#b8783c', '#806020'][Math.floor(Math.random() * 3)];
+  }
+  const r = ch.routine;
+  const s = STATIONS.bakery;
+  ch.x = s.x + s.charOffset.dx;
+  ch.y = s.y + s.charOffset.dy;
+  if (r.action === 'stoke') ch.y += Math.sin((now - r.start) / 1000 * 7) * 0.5;
+  else if (r.action === 'rest') ch.y += Math.sin((now - r.start) / 1000 * 1.5) * 0.5;
+  ch.walking = false;
+}
+
+function updateWoodpileRoutine(ch, dt, now) {
+  if (ch.leaving) return;
+  if (selectedChar === ch && state !== 'overview') { ch.walking = false; return; }
+  ensureRoutine(ch, now, 'chop');
+  rotateRoutineAction(ch, now,
+    ['chop', 'chop', 'chop', 'reload', 'wipe', 'chop'],
+    { chop: 2.4, reload: 1.4, wipe: 1.8 });
+  const r = ch.routine;
+  const s = STATIONS.woodpile;
+  ch.x = s.x + s.charOffset.dx;
+  ch.y = s.y + s.charOffset.dy;
+  if (r.action === 'reload') ch.y += 4;       // crouch
+  else if (r.action === 'chop') ch.y += Math.abs(Math.sin((now - r.start) / 1000 * 5)) * 1;
+  ch.walking = false;
+}
+
+function updateEaselRoutine(ch, dt, now) {
+  if (ch.leaving) return;
+  if (selectedChar === ch && state !== 'overview') { ch.walking = false; return; }
+  ensureRoutine(ch, now, 'paint');
+  rotateRoutineAction(ch, now,
+    ['paint', 'paint', 'mix', 'step_back', 'sip', 'paint'],
+    { paint: 2.8, mix: 1.6, step_back: 1.5, sip: 1.6 });
+  const r = ch.routine;
+  const s = STATIONS.easel;
+  ch.x = s.x + s.charOffset.dx;
+  ch.y = s.y + s.charOffset.dy;
+  if (r.action === 'step_back') ch.x += 8;       // step back to look
+  else if (r.action === 'sip') ch.y -= 1;        // lean back to sip
+  else if (r.action === 'paint') ch.y += Math.sin((now - r.start) / 1000 * 5) * 0.5;
+  ch.walking = false;
+}
+
+function updatePondRoutine(ch, dt, now) {
+  if (ch.leaving) return;
+  if (selectedChar === ch && state !== 'overview') { ch.walking = false; return; }
+  ensureRoutine(ch, now, 'wait');
+  if (rotateRoutineAction(ch, now,
+    ['wait', 'wait', 'wait', 'cast', 'catch', 'sip'],
+    { wait: 3.5, cast: 1.4, catch: 1.6, sip: 1.4 })) {
+    ch.routine.fishColor = ['#a08040', '#80a0c0', '#c08040'][Math.floor(Math.random() * 3)];
+  }
+  const r = ch.routine;
+  const s = STATIONS.pond;
+  ch.x = s.x + s.charOffset.dx;
+  ch.y = s.y + s.charOffset.dy;
+  if (r.action === 'sip') ch.y -= 1;
+  else if (r.action === 'catch') ch.y -= Math.sin((now - r.start) / 1000 * 8) * 1;
+  ch.walking = false;
+}
+
+function updateBenchRoutine(ch, dt, now) {
+  if (ch.leaving) return;
+  if (selectedChar === ch && state !== 'overview') { ch.walking = false; return; }
+  ensureRoutine(ch, now, 'read');
+  rotateRoutineAction(ch, now,
+    ['read', 'read', 'read', 'page', 'sip', 'stretch'],
+    { read: 3.2, page: 0.8, sip: 1.6, stretch: 1.4 });
+  const r = ch.routine;
+  const s = STATIONS.bench;
+  ch.x = s.x + s.charOffset.dx;
+  ch.y = s.y + s.charOffset.dy;
+  if (r.action === 'stretch') ch.y -= 2;
   ch.walking = false;
 }
 
@@ -1818,6 +1921,58 @@ function drawBakery(g, s, t) {
   drawEllipseOn(g, x + 1, y + 5, 2, 1);
   // smoke from chimney
   drawSteam(g, x + 7, y - 16, t, 5);
+
+  // ---- action-specific overlays ----
+  const ch = getStationChar('bakery');
+  const action = ch ? ch.routine.action : 'rest';
+  const elapsed = ch ? (performance.now() - ch.routine.start) / 1000 : 0;
+  const ovenX = x + 1, ovenY = y + 4;          // oven mouth center
+  const handX = ch ? ch.x + 14 : x - 18;        // baker's right hand
+  const handY = ch ? ch.y + 12 : y + 4;
+
+  if (action === 'stoke') {
+    // poking stick into oven
+    const wig = Math.sin(elapsed * 7) * 1.5;
+    const tipX = ovenX + wig;
+    const tipY = ovenY + 1;
+    drawLine(g, handX, handY, tipX, tipY, C.woodDark);
+    // sparks puff out
+    if (Math.sin(elapsed * 7) > 0.7) {
+      g.fillStyle = C.fireYellow;
+      g.fillRect(ovenX - 2, ovenY - 2, 1, 1);
+      g.fillRect(ovenX + 2, ovenY - 3, 1, 1);
+    }
+  } else if (action === 'load' || action === 'pull') {
+    // wooden peel — load is going INTO oven, pull is coming OUT
+    const phase = ch ? Math.min(1, elapsed / ch.routine.duration) : 0.5;
+    const t01 = action === 'load' ? phase : 1 - phase;   // 0=outside, 1=inside
+    const handPos = { x: handX, y: handY };
+    const ovenPos = { x: ovenX, y: ovenY };
+    const paddleX = handPos.x + (ovenPos.x - handPos.x) * t01;
+    const paddleY = handPos.y + (ovenPos.y - handPos.y) * t01;
+    // handle
+    drawLine(g, handPos.x, handPos.y, paddleX, paddleY, C.woodLight);
+    // paddle (small rectangle at end)
+    g.fillStyle = C.wood;
+    g.fillRect(Math.floor(paddleX) - 1, Math.floor(paddleY) - 2, 4, 4);
+    g.fillStyle = C.woodLight;
+    g.fillRect(Math.floor(paddleX) - 1, Math.floor(paddleY) - 2, 4, 1);
+    // bread on paddle (for pull) or raw dough (for load)
+    if (t01 < 0.85) {
+      g.fillStyle = action === 'pull' ? (ch?.routine.breadColor || '#a06030') : '#e8d8b8';
+      g.fillRect(Math.floor(paddleX), Math.floor(paddleY) - 1, 2, 2);
+      if (action === 'pull') {
+        // little crust highlight
+        g.fillStyle = '#d8a058';
+        g.fillRect(Math.floor(paddleX), Math.floor(paddleY) - 1, 1, 1);
+        // steam
+        g.globalAlpha = 0.6;
+        g.fillStyle = C.smoke;
+        g.fillRect(Math.floor(paddleX) + 1, Math.floor(paddleY) - 3, 1, 1);
+        g.globalAlpha = 1;
+      }
+    }
+  }
 }
 
 function drawGarden(g, s, t) {
@@ -1937,10 +2092,64 @@ function drawWoodpile(g, s, t) {
     g.fillRect(x + 16 + i * 6, y + 6, 2, 4);
     g.fillRect(x + 18 + i * 5, y + 2, 2, 4);
   }
-  // axe — swings with action phase
-  const swing = Math.sin(t * 4) * 0.5 - 0.7; // angle
-  const ax = x - 8, ay = y - 4;
-  drawAxe(g, ax, ay, swing);
+  // ---- action-specific overlays ----
+  const ch = getStationChar('woodpile');
+  const action = ch ? ch.routine.action : 'chop';
+  const elapsed = ch ? (performance.now() - ch.routine.start) / 1000 : t;
+  const handX = ch ? ch.x + 14 : x - 8;
+  const handY = ch ? ch.y + 8 : y - 4;
+
+  if (action === 'chop') {
+    // axe swings on a fast rhythm; strike at sin > 0.9
+    const swingT = elapsed * 4;
+    const swing = Math.sin(swingT) * 0.7 - 0.5;
+    drawAxe(g, handX, handY, swing);
+    // log on stump (gets split on each strike)
+    const struck = Math.sin(swingT) > 0.85;
+    if (!struck) {
+      // intact log on stump
+      g.fillStyle = C.trunkD;
+      g.fillRect(x - 2, y - 1, 12, 4);
+      g.fillStyle = C.trunk;
+      g.fillRect(x - 1, y, 10, 2);
+      g.fillStyle = C.woodLight;
+      g.fillRect(x, y + 1, 1, 1);
+      g.fillRect(x + 7, y + 1, 1, 1);
+    } else {
+      // split halves flying outward
+      g.fillStyle = C.trunkD;
+      g.fillRect(x - 4, y - 1, 5, 3);
+      g.fillRect(x + 5, y - 1, 5, 3);
+      g.fillStyle = C.trunk;
+      g.fillRect(x - 3, y, 3, 1);
+      g.fillRect(x + 6, y, 3, 1);
+      // chips fly
+      g.fillStyle = C.woodLight;
+      g.fillRect(x - 6, y - 5, 1, 1);
+      g.fillRect(x + 10, y - 5, 1, 1);
+      g.fillRect(x + 2, y - 7, 1, 1);
+    }
+  } else if (action === 'reload') {
+    // bending to place new log on stump
+    g.fillStyle = C.trunkD;
+    g.fillRect(x - 2, y + 1, 12, 3);
+    g.fillStyle = C.trunk;
+    g.fillRect(x - 1, y + 1, 10, 2);
+    // axe leans against stump
+    g.fillStyle = C.woodDark;
+    drawLine(g, x + 12, y + 12, x + 16, y - 4, C.woodDark);
+    g.fillStyle = '#a0a0b0';
+    g.fillRect(x + 15, y - 6, 4, 4);
+  } else if (action === 'wipe') {
+    // axe head down beside stump, char wipes brow
+    g.fillStyle = C.woodDark;
+    drawLine(g, x - 6, y + 6, x - 14, y + 12, C.woodDark);
+    g.fillStyle = '#a0a0b0';
+    g.fillRect(x - 15, y + 10, 4, 4);
+    // sweat drop floating off
+    g.fillStyle = '#80c0e0';
+    g.fillRect(handX - 6, handY - 4 + Math.floor(Math.sin(elapsed * 4) * 2), 1, 2);
+  }
 }
 
 function drawAxe(g, px, py, angle) {
@@ -1998,40 +2207,171 @@ function drawEasel(g, s, t) {
   const ph = Math.floor((t * 0.8) % 4);
   g.fillStyle = [C.flower1, C.flower2, C.water, C.fireYellow][ph];
   g.fillRect(x - 3 + ph * 2, y - 1, 2, 1);
+
+  // ---- action-specific overlays ----
+  const ch = getStationChar('easel');
+  const action = ch ? ch.routine.action : 'paint';
+  const elapsed = ch ? (performance.now() - ch.routine.start) / 1000 : 0;
+  const handX = ch ? ch.x : x + 14;
+  const handY = ch ? ch.y + 10 : y + 4;
+
+  if (action === 'paint') {
+    // brush in hand reaching to canvas
+    const wig = Math.sin(elapsed * 8) * 1;
+    const tipX = x + 2 + wig;
+    const tipY = y - 4 + Math.cos(elapsed * 6) * 2;
+    drawLine(g, handX, handY, tipX, tipY, C.woodDark);
+    // bristles
+    g.fillStyle = '#404040';
+    g.fillRect(Math.floor(tipX), Math.floor(tipY), 2, 2);
+    g.fillStyle = C.flower2;
+    g.fillRect(Math.floor(tipX), Math.floor(tipY), 1, 1);
+    // fresh stroke appears on canvas
+    g.fillStyle = [C.flower1, C.flower2, C.water, C.fireYellow, C.leavesL][Math.floor(elapsed * 2) % 5];
+    g.fillRect(Math.floor(tipX), Math.floor(tipY) + 1, 2, 1);
+  } else if (action === 'mix') {
+    // palette in left hand + brush mixing
+    g.fillStyle = C.wood;
+    drawEllipseOn(g, handX + 4, handY + 4, 6, 4);
+    g.fillStyle = C.woodLight;
+    drawEllipseOn(g, handX + 4, handY + 4, 5, 3);
+    // paint blobs
+    g.fillStyle = C.flower1; g.fillRect(handX + 1, handY + 3, 2, 1);
+    g.fillStyle = C.flower2; g.fillRect(handX + 6, handY + 3, 2, 1);
+    g.fillStyle = C.water;   g.fillRect(handX + 3, handY + 5, 2, 1);
+    g.fillStyle = C.leaves;  g.fillRect(handX + 5, handY + 5, 2, 1);
+    // brush stirring
+    const wig = Math.sin(elapsed * 10) * 2;
+    const tipX = handX + 4 + wig;
+    const tipY = handY + 4;
+    drawLine(g, tipX, tipY - 8, tipX, tipY, C.woodDark);
+    g.fillStyle = '#404040';
+    g.fillRect(Math.floor(tipX), Math.floor(tipY), 1, 1);
+  } else if (action === 'step_back') {
+    // brush hanging at side, ! over head (squinting at painting)
+    drawLine(g, handX + 2, handY + 2, handX + 4, handY + 10, C.woodDark);
+    g.fillStyle = '#404040';
+    g.fillRect(Math.floor(handX) + 4, Math.floor(handY) + 10, 2, 1);
+  } else if (action === 'sip') {
+    // mug raised to face
+    if (ch) {
+      const mx = ch.x + 1;
+      const my = ch.y + 6;
+      g.fillStyle = '#604030';
+      g.fillRect(mx, my, 5, 5);
+      g.fillStyle = '#804830';
+      g.fillRect(mx, my, 5, 1);
+      g.fillStyle = '#604030';
+      g.fillRect(mx - 1, my + 1, 1, 2);
+      // steam
+      g.globalAlpha = 0.6;
+      g.fillStyle = C.smoke;
+      g.fillRect(mx + 2, my - 2 + Math.floor(Math.sin(elapsed * 3) * 1), 1, 1);
+      g.globalAlpha = 1;
+    }
+  }
 }
 
 function drawPond(g, s, t) {
   const x = s.x, y = s.y;
   const POND_X = 230, POND_Y = 240;
-  // ripples in pond — animated
+  // ripples in pond
   const r = (t * 1.2) % 1;
   g.fillStyle = C.waterHL;
   drawRing(g, POND_X, POND_Y, 5 + r * 6, 1);
   g.globalAlpha = 1 - r;
   drawRing(g, POND_X, POND_Y, 9 + r * 4, 1);
   g.globalAlpha = 1;
-  // fishing rod from char position
-  const rodAngle = 0.4 + Math.sin(t * 0.5) * 0.05; // pointing down-right toward water
-  const rx = x + 4, ry = y;
-  const tipX = rx + Math.cos(rodAngle) * 18;
-  const tipY = ry + Math.sin(rodAngle) * 18;
-  drawLine(g, rx, ry, tipX, tipY, C.woodDark);
-  // line down to water
-  drawLine(g, tipX, tipY, POND_X, POND_Y, '#ffffff');
-  // float bobbing
-  const bob = Math.sin(t * 3) * 0.5;
-  g.fillStyle = C.fireRed;
-  g.fillRect(POND_X, POND_Y - 1 + bob, 1, 1);
-  g.fillStyle = C.flowerW;
-  g.fillRect(POND_X, POND_Y + bob, 1, 1);
-  // occasional fish jump
-  const j = (t * 0.4) % 6;
-  if (j < 0.8) {
-    const fy = Math.sin(j / 0.8 * Math.PI) * 6;
-    g.fillStyle = '#a08040';
-    g.fillRect(POND_X + 12, POND_Y - fy, 3, 2);
-    g.fillStyle = '#604018';
-    g.fillRect(POND_X + 14, POND_Y - fy, 1, 1);
+
+  const ch = getStationChar('pond');
+  const action = ch ? ch.routine.action : 'wait';
+  const elapsed = ch ? (performance.now() - ch.routine.start) / 1000 : t;
+  const phase = ch ? Math.min(1, elapsed / ch.routine.duration) : 0;
+  const handX = ch ? ch.x + 4 : x + 4;
+  const handY = ch ? ch.y : y;
+
+  if (action === 'wait' || action === 'catch') {
+    // fishing rod
+    let rodAngle = 0.4 + Math.sin(t * 0.5) * 0.05;
+    if (action === 'catch') {
+      // rod bent back hard when pulling fish out
+      rodAngle = -0.9 + Math.sin(elapsed * 6) * 0.1;
+    }
+    const tipX = handX + Math.cos(rodAngle) * 18;
+    const tipY = handY + Math.sin(rodAngle) * 18;
+    drawLine(g, handX, handY, tipX, tipY, C.woodDark);
+
+    if (action === 'wait') {
+      // line down to water
+      drawLine(g, tipX, tipY, POND_X, POND_Y, '#ffffff');
+      // float bobbing
+      const bob = Math.sin(t * 3) * 0.5;
+      g.fillStyle = C.fireRed;
+      g.fillRect(POND_X, POND_Y - 1 + bob, 1, 1);
+      g.fillStyle = C.flowerW;
+      g.fillRect(POND_X, POND_Y + bob, 1, 1);
+      // occasional fish jump
+      const j = (t * 0.4) % 6;
+      if (j < 0.8) {
+        const fy = Math.sin(j / 0.8 * Math.PI) * 6;
+        g.fillStyle = '#a08040';
+        g.fillRect(POND_X + 12, POND_Y - fy, 3, 2);
+        g.fillStyle = '#604018';
+        g.fillRect(POND_X + 14, POND_Y - fy, 1, 1);
+      }
+    } else {
+      // CATCH: fish flies up out of water on the line
+      const fishY = POND_Y - phase * 18;
+      const fishX = POND_X + Math.sin(phase * Math.PI) * 6;
+      drawLine(g, tipX, tipY, fishX, fishY, '#ffffff');
+      const fc = ch?.routine.fishColor || '#a08040';
+      g.fillStyle = fc;
+      g.fillRect(fishX - 2, fishY, 5, 2);
+      g.fillStyle = darken(fc, 0.7);
+      g.fillRect(fishX - 2, fishY + 1, 5, 1);
+      g.fillStyle = fc;
+      g.fillRect(fishX - 3, fishY, 1, 2);   // tail
+      g.fillStyle = '#fff';
+      g.fillRect(fishX + 1, fishY, 1, 1);   // eye highlight
+      g.fillStyle = '#000';
+      g.fillRect(fishX + 1, fishY, 1, 1);
+      // splash where fish came out
+      if (phase < 0.4) {
+        g.fillStyle = C.waterHL;
+        g.fillRect(POND_X - 2, POND_Y, 1, 1);
+        g.fillRect(POND_X + 2, POND_Y - 1, 1, 1);
+        g.fillRect(POND_X, POND_Y - 2, 1, 1);
+      }
+    }
+  } else if (action === 'cast') {
+    // rod swung forward in arc
+    const rodAngle = -1.4 + phase * 1.8; // sweep
+    const tipX = handX + Math.cos(rodAngle) * 18;
+    const tipY = handY + Math.sin(rodAngle) * 18;
+    drawLine(g, handX, handY, tipX, tipY, C.woodDark);
+    // line trailing
+    const lineEndX = tipX + Math.cos(rodAngle) * 14;
+    const lineEndY = tipY + Math.sin(rodAngle) * 14;
+    drawLine(g, tipX, tipY, lineEndX, lineEndY, '#ffffff');
+    g.fillStyle = C.fireRed;
+    g.fillRect(Math.floor(lineEndX), Math.floor(lineEndY), 1, 1);
+  } else if (action === 'sip') {
+    // rod leaning beside, mug in hand
+    drawLine(g, handX, handY, handX + 12, handY + 14, C.woodDark);
+    if (ch) {
+      const mx = ch.x + 8;
+      const my = ch.y + 6;
+      g.fillStyle = '#604030';
+      g.fillRect(mx, my, 5, 5);
+      g.fillStyle = '#804830';
+      g.fillRect(mx, my, 5, 1);
+      g.fillStyle = '#604030';
+      g.fillRect(mx + 5, my + 1, 1, 2);
+      g.globalAlpha = 0.6;
+      g.fillStyle = C.smoke;
+      g.fillRect(mx + 2, my - 2 + Math.floor(Math.sin(elapsed * 3) * 1), 1, 1);
+      g.globalAlpha = 1;
+    }
   }
 }
 
@@ -2053,11 +2393,72 @@ function drawBench(g, s, t) {
   g.fillRect(x - 13, y - 8, 28, 2);
   g.fillRect(x - 12, y - 6, 1, 6);
   g.fillRect(x + 13, y - 6, 1, 6);
-  // book in reader's hands (drawn separate, here a tiny floating "Z" symbol when calm)
-  if (Math.sin(t * 0.6) > 0.3) {
-    g.fillStyle = '#ffffff';
-    // tiny music/thought note
-    g.fillRect(x + 12, y - 16 + Math.sin(t) * 1, 1, 1);
+  // ---- action-specific overlays ----
+  const ch = getStationChar('bench');
+  const action = ch ? ch.routine.action : 'read';
+  const elapsed = ch ? (performance.now() - ch.routine.start) / 1000 : t;
+  const phase = ch ? Math.min(1, elapsed / ch.routine.duration) : 0;
+  const handX = ch ? ch.x + 4 : x + 4;
+  const handY = ch ? ch.y + 12 : y - 4;
+
+  if (action === 'read' || action === 'page') {
+    // book in hands
+    g.fillStyle = '#604018';
+    g.fillRect(handX, handY, 9, 7);
+    // open pages
+    g.fillStyle = '#e8d8b8';
+    g.fillRect(handX + 1, handY + 1, 7, 5);
+    // page split line
+    g.fillStyle = '#806038';
+    g.fillRect(handX + 4, handY + 1, 1, 5);
+    // text lines
+    g.fillStyle = '#806038';
+    g.fillRect(handX + 2, handY + 2, 2, 1);
+    g.fillRect(handX + 2, handY + 4, 2, 1);
+    g.fillRect(handX + 5, handY + 2, 2, 1);
+    g.fillRect(handX + 5, handY + 4, 2, 1);
+    if (action === 'page') {
+      // page being flipped — white flash arcing across
+      g.fillStyle = '#f8e8c8';
+      const px = handX + 4 + Math.sin(phase * Math.PI) * 4;
+      g.fillRect(Math.floor(px), handY + 1, 1, 5);
+    }
+    // thought "..." occasionally
+    if (Math.sin(t * 0.6) > 0.3) {
+      g.fillStyle = '#ffffff';
+      g.fillRect(x + 14, y - 16 + Math.floor(Math.sin(t) * 1), 1, 1);
+    }
+  } else if (action === 'sip') {
+    // mug raised to face
+    if (ch) {
+      const mx = ch.x + 1;
+      const my = ch.y + 6;
+      g.fillStyle = '#604030';
+      g.fillRect(mx, my, 5, 5);
+      g.fillStyle = '#804830';
+      g.fillRect(mx, my, 5, 1);
+      g.fillStyle = '#604030';
+      g.fillRect(mx - 1, my + 1, 1, 2);
+      // steam
+      g.globalAlpha = 0.6;
+      g.fillStyle = C.smoke;
+      g.fillRect(mx + 2, my - 2 + Math.floor(Math.sin(elapsed * 3) * 1), 1, 1);
+      g.globalAlpha = 1;
+    }
+    // book closed on bench
+    g.fillStyle = '#604018';
+    g.fillRect(x + 4, y + 1, 6, 2);
+  } else if (action === 'stretch') {
+    // arms raised — render small star/burst above head
+    if (ch) {
+      g.fillStyle = '#ffffff';
+      g.fillRect(ch.x + 3, ch.y - 4, 1, 1);
+      g.fillRect(ch.x + 11, ch.y - 4, 1, 1);
+      g.fillRect(ch.x + 7, ch.y - 6, 1, 1);
+    }
+    // book closed on bench
+    g.fillStyle = '#604018';
+    g.fillRect(x + 4, y + 1, 6, 2);
   }
 }
 
@@ -2551,6 +2952,16 @@ function frame(now) {
       updateGardenRoutine(ch, dt, now);
     } else if (ch.station === 'kitchen') {
       updateKitchenRoutine(ch, dt, now);
+    } else if (ch.station === 'bakery') {
+      updateBakeryRoutine(ch, dt, now);
+    } else if (ch.station === 'woodpile') {
+      updateWoodpileRoutine(ch, dt, now);
+    } else if (ch.station === 'easel') {
+      updateEaselRoutine(ch, dt, now);
+    } else if (ch.station === 'pond') {
+      updatePondRoutine(ch, dt, now);
+    } else if (ch.station === 'bench') {
+      updateBenchRoutine(ch, dt, now);
     }
   }
   for (const cat of CATS) {
