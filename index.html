@@ -717,12 +717,12 @@ function updateCampfireRoutine(ch, dt, now) {
   const r = ch.routine;
   if (now - r.start >= r.duration * 1000) {
     // pick next action — weighted bag
-    const bag = ['circle', 'circle', 'jump', 'dance', 'idle', 'dance'];
+    const bag = ['circle', 'roast', 'roast', 'dance', 'idle', 'dance', 'circle'];
     let next = bag[Math.floor(Math.random() * bag.length)];
     if (next === r.action && Math.random() < 0.6) next = bag[Math.floor(Math.random() * bag.length)];
     r.action = next;
     r.start = now;
-    r.duration = { circle: 4.5, jump: 1.1, dance: 3.2, idle: 2.4 }[next] || 2;
+    r.duration = { circle: 4.5, roast: 4.5, dance: 3.2, idle: 2.4 }[next] || 2;
     r.dir = Math.random() < 0.5 ? 1 : -1;
     r.circleDir = Math.random() < 0.5 ? 1 : -1;
     r.circlePhase = Math.random() * Math.PI * 2;
@@ -741,13 +741,12 @@ function updateCampfireRoutine(ch, dt, now) {
       ch.walkPhase += dt * 9;
       break;
     }
-    case 'jump': {
-      const startX = FX - r.dir * 22 - 7;
-      const endX   = FX + r.dir * 22 - 7;
-      ch.x = startX + (endX - startX) * phase;
-      ch.y = FY - 12 - Math.sin(phase * Math.PI) * 20;
-      ch.walking = true;
-      ch.walkPhase += dt * 14;
+    case 'roast': {
+      // sit/stand close to fire on one side, holding stick over the flames
+      const side = r.dir;
+      ch.x = FX + side * 18 - 7;
+      ch.y = FY - 8;
+      ch.walking = false;
       break;
     }
     case 'dance': {
@@ -2474,14 +2473,47 @@ function drawCampfire(g, s, t) {
   g.fillRect(x + 6, y + 4, 1, 3);
   // fire
   drawFire(g, x, y, t);
-  // music notes from musician (drawn by char's side)
-  const note = Math.sin(t * 0.7);
-  if (note > 0) {
-    g.fillStyle = '#ffffff';
-    g.font = '8px monospace';
-    g.fillText('♪', x + 24, y - 6 - note * 6);
-    g.font = '6px monospace';
-    g.fillText('♫', x + 28, y - 12 - note * 8);
+
+  // ---- action-specific overlays ----
+  const chars = CHARACTERS.filter(c => c.station === 'campfire' && !c.hidden && c.routine);
+  for (const ch of chars) {
+    const action = ch.routine.action;
+    const elapsed = (performance.now() - ch.routine.start) / 1000;
+    if (action === 'roast') {
+      // stick from char's hand toward over the fire
+      const handX = ch.x + 4;
+      const handY = ch.y + 12;
+      const mallowX = x;
+      const mallowY = y - 1;
+      drawLine(g, handX, handY, mallowX, mallowY, C.woodDark);
+      // marshmallow — slowly toasts to brown
+      const toast = Math.min(1, elapsed / 3.5);
+      const r = Math.floor(248 - toast * 130);
+      const gg = Math.floor(232 - toast * 150);
+      const b = Math.floor(200 - toast * 170);
+      g.fillStyle = `rgb(${r},${gg},${b})`;
+      g.fillRect(mallowX - 1, mallowY - 1, 3, 3);
+      // highlight + bottom shade
+      g.fillStyle = `rgb(${Math.min(255,r+24)},${Math.min(255,gg+24)},${Math.min(255,b+24)})`;
+      g.fillRect(mallowX - 1, mallowY - 1, 1, 1);
+      g.fillStyle = `rgb(${Math.max(0,r-40)},${Math.max(0,gg-40)},${Math.max(0,b-40)})`;
+      g.fillRect(mallowX + 1, mallowY + 1, 1, 1);
+      // if heavily toasted, occasional flame lick
+      if (toast > 0.7 && Math.sin(elapsed * 8) > 0.5) {
+        g.fillStyle = C.fireOrange;
+        g.fillRect(mallowX, mallowY - 2, 1, 1);
+      }
+    } else if (action === 'dance' || action === 'idle') {
+      // music notes for the musician/idler
+      const note = Math.sin(t * 0.7 + (ch.bobPhase || 0));
+      if (note > 0) {
+        g.fillStyle = '#ffffff';
+        g.font = '8px monospace';
+        g.fillText('♪', ch.x + 16, ch.y + 4 - note * 6);
+        g.font = '6px monospace';
+        g.fillText('♫', ch.x + 20, ch.y - 2 - note * 8);
+      }
+    }
   }
 }
 
@@ -2694,13 +2726,58 @@ for (const cat of CATS) {
 }
 
 function isValidCatPos(x, y) {
-  if (Math.hypot((x - 230) / 32, (y - 240) / 14) < 1.0) return false; // pond
-  if (x < 195 || x > 304) return false;                  // stay between fenced garden + cottage
-  if (y < 200 || y > 262) return false;
+  // same exclusions as wanderers — cats roam the whole valid grass area
+  if (Math.hypot((x - 230) / 34, (y - 240) / 16) < 1.0) return false; // pond
+  if (x > 305 && x < 470 && y > 4 && y < 140) return false;            // main house
+  if (x > 305 && x < 445 && y > 170 && y < 268) return false;          // cottage
+  if (x > 10 && x < 80 && y > 48 && y < 108) return false;             // shed
+  if (x > 105 && x < 200 && y > 75 && y < 140) return false;           // top garden
+  if (x > 22 && x < 198 && y > 192 && y < 256) return false;           // fenced garden
+  if (x < 14 || x > VW - 18) return false;
+  if (y < 30 || y > VH - 16) return false;
   return true;
 }
 
 function updateCat(cat, dt, now) {
+  // ----- bothering a character -----
+  if (cat.targetChar) {
+    const ch = cat.targetChar;
+    if (ch.hidden || ch.leaving) {
+      cat.targetChar = null;
+      cat.botherUntil = 0;
+      cat.idleUntil = now + 300;
+      return;
+    }
+    const side = cat.botherSide || 12;
+    const tx = ch.x + 7 + side - 5;
+    const ty = ch.y + 14;
+    const dx = tx - cat.x;
+    const dy = ty - cat.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 2) {
+      if (!cat.botherUntil) {
+        cat.botherUntil = now + 1800 + Math.random() * 3500;
+        cat.walking = false;
+      } else if (now >= cat.botherUntil) {
+        cat.targetChar = null;
+        cat.botherUntil = 0;
+        cat.idleUntil = now + 600;
+      } else if (Math.hypot(ch.x + 7 + side - 5 - cat.x, ch.y + 14 - cat.y) > 6) {
+        // char moved away — chase again
+        cat.botherUntil = 0;
+      }
+    } else {
+      const speed = 26;
+      cat.x += (dx / d) * speed * dt;
+      cat.y += (dy / d) * speed * dt;
+      if (Math.abs(dx) > 0.3) cat.facing = dx >= 0 ? 1 : -1;
+      cat.walking = true;
+      cat.walkPhase += dt * 6;
+    }
+    return;
+  }
+
+  // ----- regular wandering -----
   if (cat.target) {
     const dx = cat.target.x - cat.x;
     const dy = cat.target.y - cat.y;
@@ -2708,7 +2785,7 @@ function updateCat(cat, dt, now) {
     if (d < 1.5) {
       cat.target = null;
       cat.walking = false;
-      cat.idleUntil = now + 1500 + Math.random() * 4000;
+      cat.idleUntil = now + 1200 + Math.random() * 3500;
     } else {
       const speed = 14 + Math.random() * 4;
       cat.x += (dx / d) * speed * dt;
@@ -2720,11 +2797,20 @@ function updateCat(cat, dt, now) {
   } else {
     cat.walking = false;
     if (now >= cat.idleUntil) {
-      for (let attempt = 0; attempt < 14; attempt++) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 14 + Math.random() * 40;
-        const tx = cat.home.x + Math.cos(angle) * dist;
-        const ty = cat.home.y + Math.sin(angle) * dist * 0.55;
+      // ~40% chance: go bother a random non-hidden human
+      if (Math.random() < 0.42) {
+        const pool = CHARACTERS.filter(c => !c.hidden && !c.leaving);
+        if (pool.length > 0) {
+          cat.targetChar = pool[Math.floor(Math.random() * pool.length)];
+          cat.botherSide = (Math.random() < 0.5 ? -1 : 1) * (10 + Math.floor(Math.random() * 4));
+          cat.botherUntil = 0;
+          return;
+        }
+      }
+      // otherwise pick a random valid spot anywhere on the map
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const tx = 18 + Math.random() * (VW - 36);
+        const ty = 36 + Math.random() * (VH - 60);
         if (isValidCatPos(tx, ty)) {
           cat.target = { x: tx, y: ty };
           break;
@@ -2753,6 +2839,19 @@ function drawCat(g, cat, t) {
     g.restore();
   } else {
     g.drawImage(sprite, Math.floor(cat.x), Math.floor(cat.y));
+  }
+  // floating heart when bothering a person
+  if (cat.targetChar && cat.botherUntil && performance.now() < cat.botherUntil) {
+    const phase = (t * 1.3 + cat.x * 0.01) % 1;
+    const hy = Math.floor(cat.y - 4 - phase * 10);
+    const hx = Math.floor(cat.x + 4);
+    g.globalAlpha = Math.max(0, 1 - phase);
+    g.fillStyle = '#ff6080';
+    g.fillRect(hx, hy + 1, 1, 1);
+    g.fillRect(hx + 2, hy + 1, 1, 1);
+    g.fillRect(hx, hy + 2, 3, 1);
+    g.fillRect(hx + 1, hy + 3, 1, 1);
+    g.globalAlpha = 1;
   }
 }
 
