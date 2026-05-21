@@ -249,6 +249,31 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .char-station-select {
+    width: 100%;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #d8d8d8;
+    padding: 4px 6px;
+    font-family: ui-sans-serif, system-ui;
+    font-size: 11px;
+    cursor: pointer;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, #888 50%), linear-gradient(135deg, #888 50%, transparent 50%);
+    background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+    background-size: 5px 5px;
+    background-repeat: no-repeat;
+    padding-right: 22px;
+  }
+  .char-station-select:hover { border-color: rgba(128, 192, 255, 0.4); }
+  .char-station-select:focus { border-color: #80c0ff; outline: none; }
+  .char-station-select option {
+    background: #14141c;
+    color: #fff;
+    font-family: ui-sans-serif, system-ui;
+  }
   .char-remove {
     width: 28px; height: 28px;
     background: transparent;
@@ -541,6 +566,35 @@ function updateLeavingChar(ch, dt) {
     // fade out as approaching door
     ch.alpha = Math.max(0, Math.min(1, (d - 6) / 22));
   }
+}
+
+function assignStation(ch, newStation) {
+  if (ch.station === newStation) return;
+  ch.station = newStation;
+  // refresh picked/hidden state so they re-enter the scene
+  ch.pickedThisRound = false;
+  ch.hidden = false;
+  ch.leaving = false;
+  ch.leavingTo = null;
+  ch.alpha = 1;
+  ch.walking = false;
+  ch.wanderTarget = null;
+  if (newStation === 'wander') {
+    ch.activity = rnd(WANDER_ACTIVITIES);
+    ch.wanderHome = pickWanderHome();
+    ch.x = ch.wanderHome.x;
+    ch.y = ch.wanderHome.y;
+    ch.idleUntil = 0;
+  } else {
+    ch.activity = undefined;
+    ch.wanderHome = undefined;
+    const s = STATIONS[newStation];
+    // small horizontal stack offset if other chars already on this station
+    const others = CHARACTERS.filter(c => c !== ch && c.station === newStation && !c.hidden).length;
+    ch.x = s.x + s.charOffset.dx + others * 14;
+    ch.y = s.y + s.charOffset.dy;
+  }
+  saveToStorage();
 }
 
 function resetRound() {
@@ -2359,16 +2413,29 @@ function rebuildPanel(opts = {}) {
       }
     });
 
-    const stationLabel = document.createElement('div');
-    stationLabel.className = 'char-station';
-    if (ch.station === 'wander') {
-      stationLabel.textContent = '• ' + (ch.activity || 'слоняется').toUpperCase();
-    } else {
-      stationLabel.textContent = STATIONS[ch.station].activity.toUpperCase();
-    }
+    const stationSelect = document.createElement('select');
+    stationSelect.className = 'char-station-select';
+    // station options (jobs at fixed locations)
+    Object.keys(STATIONS).forEach(key => {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = STATIONS[key].activity;
+      if (ch.station === key) opt.selected = true;
+      stationSelect.appendChild(opt);
+    });
+    // wander option (no fixed spot — just walks around)
+    const wanderOpt = document.createElement('option');
+    wanderOpt.value = 'wander';
+    wanderOpt.textContent = '— просто гуляет —';
+    if (ch.station === 'wander') wanderOpt.selected = true;
+    stationSelect.appendChild(wanderOpt);
+    stationSelect.addEventListener('change', (e) => {
+      assignStation(ch, e.target.value);
+      rebuildPanel();
+    });
 
     info.appendChild(input);
-    info.appendChild(stationLabel);
+    info.appendChild(stationSelect);
 
     // remove
     const removeBtn = document.createElement('button');
